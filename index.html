@@ -17,32 +17,33 @@
         width: 100%;
         height: 100%;
         overflow: hidden;
-        background-color: #000; /* 留白區域以純黑底襯托，凸顯相框 */
+        background-color: #000;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       }
 
-      /* 外層容器：滿版居中 */
       #stage-container {
         position: relative;
         width: 100vw;
-        height: 100dvh; /* 支援動態視口高度，避開手機瀏覽器上下網址列 */
+        height: 100dvh;
         display: flex;
         justify-content: center;
         align-items: center;
         overflow: hidden;
       }
 
-      /* 鏡頭即時畫面 */
+      /* 鏡頭畫面：透過 class 動態控制鏡像反轉 */
       #camera-video {
         position: absolute;
         width: 100%;
         height: 100%;
-        object-fit: cover; /* 鏡頭畫面填滿背景 */
-        transform: scaleX(-1); /* 自拍鏡像翻轉，體驗更自然 */
+        object-fit: cover;
         z-index: 1;
       }
+      .mirror {
+        transform: scaleX(-1);
+      }
 
-      /* 核心重點：相框層 */
+      /* 相框層：contain 確保整幅相框 100% 完整露出不裁切 */
       #frame-overlay {
         position: absolute;
         width: 100%;
@@ -50,13 +51,12 @@
         background-image: url('./newyear.png');
         background-repeat: no-repeat;
         background-position: center center;
-        /* 使用 contain：不論螢幕多長或多闊，相框一定完整顯示，絕不裁邊！ */
-        background-size: contain; 
+        background-size: contain;
         pointer-events: none;
         z-index: 2;
       }
 
-      /* 操作控制按鈕區 */
+      /* 控制介面 */
       .ui-bar {
         position: fixed;
         bottom: calc(20px + env(safe-area-inset-bottom));
@@ -69,12 +69,19 @@
         z-index: 10;
       }
 
+      .btn-row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 28px;
+      }
+
       /* 拍照按鈕 */
       #shutter-btn {
         width: 72px;
         height: 72px;
         border-radius: 50%;
-        background: #e60012; /* 喜慶紅 */
+        background: #e60012;
         border: 4px solid #fff;
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
         cursor: pointer;
@@ -85,7 +92,31 @@
         transform: scale(0.92);
       }
 
-      /* 提示貼紙 */
+      /* 切換鏡頭按鈕 */
+      #switch-btn {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.25);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: 2px solid rgba(255, 255, 255, 0.8);
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        outline: none;
+      }
+      #switch-btn:active {
+        transform: scale(0.9);
+      }
+      #switch-btn svg {
+        width: 24px;
+        height: 24px;
+        fill: #fff;
+      }
+
       .hint {
         color: #fff;
         font-size: 13px;
@@ -93,11 +124,9 @@
         background: rgba(0, 0, 0, 0.6);
         padding: 6px 16px;
         border-radius: 20px;
-        border: 1px solid rgba(255, 215, 0, 0.8); /* 金邊 */
-        letter-spacing: 0.5px;
+        border: 1px solid rgba(255, 215, 0, 0.8);
       }
 
-      /* 隱藏的 Canvas（拍照合成專用） */
       #render-canvas {
         display: none;
       }
@@ -105,17 +134,26 @@
   </head>
   <body>
     <div id="stage-container">
-      <!-- 1. 前置相機鏡頭串流 -->
-      <video id="camera-video" autoplay playsinline muted></video>
-
-      <!-- 2. 保證整幅出齊的相框層 -->
+      <video id="camera-video" class="mirror" autoplay playsinline muted></video>
       <div id="frame-overlay"></div>
     </div>
 
-    <!-- 3. 操作按鈕 -->
     <div class="ui-bar">
       <div class="hint">🧧 對準相框，按下按鈕合照存檔 🧧</div>
-      <button id="shutter-btn" onclick="capturePhoto()"></button>
+      <div class="btn-row">
+        <!-- 佔位用，保持快門鍵居中 -->
+        <div style="width: 48px;"></div>
+
+        <!-- 拍照按鈕 -->
+        <button id="shutter-btn" onclick="capturePhoto()" aria-label="拍照"></button>
+
+        <!-- 切換鏡頭按鈕 -->
+        <button id="switch-btn" onclick="toggleCamera()" aria-label="切換鏡頭">
+          <svg viewBox="0 0 24 24">
+            <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>
+          </svg>
+        </button>
+      </div>
     </div>
 
     <canvas id="render-canvas"></canvas>
@@ -124,32 +162,54 @@
       const video = document.getElementById('camera-video');
       const canvas = document.getElementById('render-canvas');
       const frameImg = new Image();
-      frameImg.src = './newyear.png'; // 載入相框圖片
+      frameImg.src = './newyear.png';
 
-      // 1. 調用手機自拍鏡頭（最高解像度）
-      async function startCamera() {
+      // 紀錄目前使用的鏡頭：'user' (前置自拍) 或 'environment' (後置鏡頭)
+      let currentFacingMode = 'user';
+      let currentStream = null;
+
+      async function initCamera(facingMode) {
+        // 停止之前的鏡頭串流以釋放硬件資源
+        if (currentStream) {
+          currentStream.getTracks().forEach(track => track.stop());
+        }
+
         try {
           const constraints = {
             audio: false,
             video: {
-              facingMode: 'user', // 指定前置自拍鏡頭
+              facingMode: { ideal: facingMode },
               width: { ideal: 1920 },
               height: { ideal: 1080 }
             }
           };
-          const stream = await navigator.mediaDevices.getUserMedia(constraints);
-          video.srcObject = stream;
+
+          currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+          video.srcObject = currentStream;
+
+          // 自拍鏡頭開啟鏡像，後置鏡頭關閉鏡像
+          if (facingMode === 'user') {
+            video.classList.add('mirror');
+          } else {
+            video.classList.remove('mirror');
+          }
+          currentFacingMode = facingMode;
         } catch (err) {
-          alert('請允許瀏覽器使用相機權限以使用 AR 相框！');
+          alert('無法取得相機權限，請確認瀏覽器設定。');
           console.error(err);
         }
       }
 
-      // 2. 拍照並完美合成「人像 + newyear.png 相框」
+      // 切換前後鏡頭
+      function toggleCamera() {
+        const targetMode = currentFacingMode === 'user' ? 'environment' : 'user';
+        initCamera(targetMode);
+      }
+
+      // 拍照並精確合成照片
       function capturePhoto() {
         if (!video.videoWidth || !frameImg.complete) return;
 
-        // 以相框的原始尺寸作為最終輸出的高畫質解析度
         const targetWidth = frameImg.naturalWidth || 1080;
         const targetHeight = frameImg.naturalHeight || 1920;
 
@@ -157,7 +217,7 @@
         canvas.height = targetHeight;
         const ctx = canvas.getContext('2d');
 
-        // A. 計算人像畫面並置中裁切填滿相框背後 (Cover 模式)
+        // 計算裁切比例使其填滿畫面背後
         const vWidth = video.videoWidth;
         const vHeight = video.videoHeight;
         const videoRatio = vWidth / vHeight;
@@ -176,29 +236,19 @@
           sy = (vHeight - sHeight) / 2;
         }
 
-        // B. 繪製人像鏡像（自拍鏡像儲存）
+        // 判斷是否需要鏡像繪製
         ctx.save();
-        ctx.translate(targetWidth, 0);
-        ctx.scale(-1, 1);
+        if (currentFacingMode === 'user') {
+          ctx.translate(targetWidth, 0);
+          ctx.scale(-1, 1);
+        }
         ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, targetWidth, targetHeight);
         ctx.restore();
 
-        // C. 將完整相框 1:1 完美蓋在人像最上層
+        // 疊加相框層
         ctx.drawImage(frameImg, 0, 0, targetWidth, targetHeight);
 
-        // D. 轉成照片下載至手機相簿
+        // 下載合成相片
         canvas.toBlob((blob) => {
           const url = URL.createObjectURL(blob);
           const downloadLink = document.createElement('a');
-          downloadLink.href = url;
-          downloadLink.download = `NewYear_Photo_${Date.now()}.png`;
-          downloadLink.click();
-          URL.revokeObjectURL(url);
-        }, 'image/png');
-      }
-
-      // 啟動相機
-      window.addEventListener('DOMContentLoaded', startCamera);
-    </script>
-  </body>
-</html>
