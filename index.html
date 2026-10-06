@@ -31,7 +31,7 @@
         overflow: hidden;
       }
 
-      /* 鏡頭畫面：透過 class 動態控制鏡像反轉 */
+      /* 鏡頭畫面 */
       #camera-video {
         position: absolute;
         width: 100%;
@@ -43,7 +43,7 @@
         transform: scaleX(-1);
       }
 
-      /* 相框層：contain 確保整幅相框 100% 完整露出不裁切 */
+      /* 相框層 */
       #frame-overlay {
         position: absolute;
         width: 100%;
@@ -56,13 +56,56 @@
         z-index: 2;
       }
 
-      /* 控制介面 */
+      /* 解決問題 1：開場授權遮罩層 */
+      #start-screen {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100dvh;
+        background: rgba(0, 0, 0, 0.85);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+        padding: 20px;
+        text-align: center;
+      }
+
+      .start-title {
+        color: #ffd700;
+        font-size: 24px;
+        font-weight: bold;
+        margin-bottom: 12px;
+      }
+
+      .start-desc {
+        color: #fff;
+        font-size: 15px;
+        margin-bottom: 28px;
+        line-height: 1.5;
+      }
+
+      #start-btn {
+        background: linear-gradient(135deg, #e60012, #ff4a4a);
+        color: #fff;
+        font-size: 18px;
+        font-weight: bold;
+        padding: 14px 36px;
+        border-radius: 30px;
+        border: 2px solid #ffd700;
+        box-shadow: 0 4px 20px rgba(230, 0, 18, 0.5);
+        cursor: pointer;
+      }
+
+      /* 操作控制區 */
       .ui-bar {
         position: fixed;
         bottom: calc(20px + env(safe-area-inset-bottom));
         left: 0;
         width: 100%;
-        display: flex;
+        display: none; /* 啟動後才顯示 */
         flex-direction: column;
         align-items: center;
         gap: 12px;
@@ -73,26 +116,23 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        gap: 28px;
+        gap: 32px;
       }
 
-      /* 拍照按鈕 */
       #shutter-btn {
-        width: 72px;
-        height: 72px;
+        width: 74px;
+        height: 74px;
         border-radius: 50%;
         background: #e60012;
         border: 4px solid #fff;
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
         cursor: pointer;
-        outline: none;
         transition: transform 0.1s;
       }
       #shutter-btn:active {
-        transform: scale(0.92);
+        transform: scale(0.9);
       }
 
-      /* 切換鏡頭按鈕 */
       #switch-btn {
         width: 48px;
         height: 48px;
@@ -101,15 +141,10 @@
         backdrop-filter: blur(8px);
         -webkit-backdrop-filter: blur(8px);
         border: 2px solid rgba(255, 255, 255, 0.8);
-        color: #fff;
         display: flex;
         align-items: center;
         justify-content: center;
         cursor: pointer;
-        outline: none;
-      }
-      #switch-btn:active {
-        transform: scale(0.9);
       }
       #switch-btn svg {
         width: 24px;
@@ -133,21 +168,24 @@
     </style>
   </head>
   <body>
+    <!-- 1. 開場點擊層 (確保觸發相機授權) -->
+    <div id="start-screen">
+      <div class="start-title">🧧 新年 AR 自拍相框 🧧</div>
+      <div class="start-desc">請點擊下方按鈕並允許相機權限<br>即可開始合照體驗</div>
+      <button id="start-btn" onclick="userStart()">開啟相機</button>
+    </div>
+
     <div id="stage-container">
       <video id="camera-video" class="mirror" autoplay playsinline muted></video>
       <div id="frame-overlay"></div>
     </div>
 
-    <div class="ui-bar">
-      <div class="hint">🧧 對準相框，按下按鈕合照存檔 🧧</div>
+    <!-- 2. 操作按鈕列 -->
+    <div class="ui-bar" id="ui-bar">
+      <div class="hint">按下拍照鍵 即可存入相簿</div>
       <div class="btn-row">
-        <!-- 佔位用，保持快門鍵居中 -->
         <div style="width: 48px;"></div>
-
-        <!-- 拍照按鈕 -->
-        <button id="shutter-btn" onclick="capturePhoto()" aria-label="拍照"></button>
-
-        <!-- 切換鏡頭按鈕 -->
+        <button id="shutter-btn" onclick="captureAndSave()" aria-label="拍照"></button>
         <button id="switch-btn" onclick="toggleCamera()" aria-label="切換鏡頭">
           <svg viewBox="0 0 24 24">
             <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>
@@ -161,15 +199,22 @@
     <script>
       const video = document.getElementById('camera-video');
       const canvas = document.getElementById('render-canvas');
+      const startScreen = document.getElementById('start-screen');
+      const uiBar = document.getElementById('ui-bar');
       const frameImg = new Image();
       frameImg.src = './newyear.png';
 
-      // 紀錄目前使用的鏡頭：'user' (前置自拍) 或 'environment' (後置鏡頭)
       let currentFacingMode = 'user';
       let currentStream = null;
 
+      // 使用者手動觸發啟用鏡頭
+      async function userStart() {
+        startScreen.style.display = 'none';
+        uiBar.style.display = 'flex';
+        await initCamera(currentFacingMode);
+      }
+
       async function initCamera(facingMode) {
-        // 停止之前的鏡頭串流以釋放硬件資源
         if (currentStream) {
           currentStream.getTracks().forEach(track => track.stop());
         }
@@ -187,7 +232,6 @@
           currentStream = await navigator.mediaDevices.getUserMedia(constraints);
           video.srcObject = currentStream;
 
-          // 自拍鏡頭開啟鏡像，後置鏡頭關閉鏡像
           if (facingMode === 'user') {
             video.classList.add('mirror');
           } else {
@@ -195,19 +239,18 @@
           }
           currentFacingMode = facingMode;
         } catch (err) {
-          alert('無法取得相機權限，請確認瀏覽器設定。');
+          alert('請確保於 Safari / Chrome 打開，並允許使用相機權限。');
           console.error(err);
         }
       }
 
-      // 切換前後鏡頭
       function toggleCamera() {
         const targetMode = currentFacingMode === 'user' ? 'environment' : 'user';
         initCamera(targetMode);
       }
 
-      // 拍照並精確合成照片
-      function capturePhoto() {
+      // 解決問題 2：合成並直接存至手機原生相簿
+      async function captureAndSave() {
         if (!video.videoWidth || !frameImg.complete) return;
 
         const targetWidth = frameImg.naturalWidth || 1080;
@@ -217,7 +260,7 @@
         canvas.height = targetHeight;
         const ctx = canvas.getContext('2d');
 
-        // 計算裁切比例使其填滿畫面背後
+        // 計算視訊裁切
         const vWidth = video.videoWidth;
         const vHeight = video.videoHeight;
         const videoRatio = vWidth / vHeight;
@@ -236,7 +279,7 @@
           sy = (vHeight - sHeight) / 2;
         }
 
-        // 判斷是否需要鏡像繪製
+        // 繪製人像（自拍自動鏡像）
         ctx.save();
         if (currentFacingMode === 'user') {
           ctx.translate(targetWidth, 0);
@@ -248,7 +291,38 @@
         // 疊加相框層
         ctx.drawImage(frameImg, 0, 0, targetWidth, targetHeight);
 
-        // 下載合成相片
-        canvas.toBlob((blob) => {
-          const url = URL.createObjectURL(blob);
-          const downloadLink = document.createElement('a');
+        // 轉為檔案物件
+        canvas.toBlob(async (blob) => {
+          const file = new File([blob], `NewYear_${Date.now()}.png`, { type: 'image/png' });
+
+          // 核心：若支援原生 Web Share API，直接叫出系統分享面板存入相簿
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            try {
+              await navigator.share({
+                files: [file],
+                title: '新年相框合照',
+                text: '新年快樂！'
+              });
+            } catch (error) {
+              if (error.name !== 'AbortError') {
+                fallbackDownload(blob);
+              }
+            }
+          } else {
+            // 不支援 Web Share 的環境走傳統自動下載
+            fallbackDownload(blob);
+          }
+        }, 'image/png');
+      }
+
+      function fallbackDownload(blob) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `NewYear_${Date.now()}.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    </script>
+  </body>
+</html>
