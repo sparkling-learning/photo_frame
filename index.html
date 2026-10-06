@@ -2,104 +2,203 @@
 <html lang="zh-Hant">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover" />
-    <title>2027 新年快樂 AR 自拍相框</title>
-    <!-- 引入 A-Frame 與 MindAR 人臉辨識庫 -->
-    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-face-aframe.prod.js"></script>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <title>新年 AR 自拍相框</title>
     <style>
-      body { margin: 0; overflow: hidden; font-family: 'Microsoft JhengHei', sans-serif; background-color: #000; }
-      
-      /* 固定在螢幕最前端的新年相框 PNG 覆蓋層 */
-      #overlay-frame {
-        position: fixed;
-        top: 0; left: 0;
-        width: 100vw; height: 100vh;
-        background-image: url('./newyear.png'); /* 這裡已套用你的相框 newyear.png */
-        background-size: cover;
-        background-position: center;
-        pointer-events: none; /* 穿透點擊，不影響下方 A-Frame 控制 */
-        z-index: 100;
+      * {
+        box-sizing: border-box;
+      }
+      body, html {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background-color: #000; /* 留白區域以純黑底襯托，凸顯相框 */
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       }
 
-      /* 介面按鈕區 */
-      .ui-container {
+      /* 外層容器：滿版居中 */
+      #stage-container {
+        position: relative;
+        width: 100vw;
+        height: 100dvh; /* 支援動態視口高度，避開手機瀏覽器上下網址列 */
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        overflow: hidden;
+      }
+
+      /* 鏡頭即時畫面 */
+      #camera-video {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        object-fit: cover; /* 鏡頭畫面填滿背景 */
+        transform: scaleX(-1); /* 自拍鏡像翻轉，體驗更自然 */
+        z-index: 1;
+      }
+
+      /* 核心重點：相框層 */
+      #frame-overlay {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        background-image: url('./newyear.png');
+        background-repeat: no-repeat;
+        background-position: center center;
+        /* 使用 contain：不論螢幕多長或多闊，相框一定完整顯示，絕不裁邊！ */
+        background-size: contain; 
+        pointer-events: none;
+        z-index: 2;
+      }
+
+      /* 操作控制按鈕區 */
+      .ui-bar {
         position: fixed;
-        bottom: 40px;
-        left: 50%;
-        transform: translateX(-50%);
+        bottom: calc(20px + env(safe-area-inset-bottom));
+        left: 0;
+        width: 100%;
         display: flex;
         flex-direction: column;
         align-items: center;
-        z-index: 999;
-        gap: 15px;
+        gap: 12px;
+        z-index: 10;
       }
 
       /* 拍照按鈕 */
-      #capture-btn {
-        width: 76px; height: 76px;
+      #shutter-btn {
+        width: 72px;
+        height: 72px;
         border-radius: 50%;
-        background: #ff3b30; /* 新年喜慶紅 */
-        border: 5px solid #fff;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+        background: #e60012; /* 喜慶紅 */
+        border: 4px solid #fff;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
         cursor: pointer;
-        transition: transform 0.1s ease;
+        outline: none;
+        transition: transform 0.1s;
       }
-      #capture-btn:active { transform: scale(0.9); }
+      #shutter-btn:active {
+        transform: scale(0.92);
+      }
 
-      /* 溫馨提示文字 */
-      .tip-text {
+      /* 提示貼紙 */
+      .hint {
         color: #fff;
-        text-shadow: 0 2px 5px rgba(0,0,0,0.8);
-        font-size: 14px;
-        background: rgba(139, 0, 0, 0.6); /* 暗紅半透明背景 */
-        padding: 5px 15px;
-        border-radius: 15px;
-        border: 1px solid #ffd700; /* 金邊 */
-        font-weight: bold;
-        pointer-events: none;
+        font-size: 13px;
+        font-weight: 600;
+        background: rgba(0, 0, 0, 0.6);
+        padding: 6px 16px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 215, 0, 0.8); /* 金邊 */
+        letter-spacing: 0.5px;
+      }
+
+      /* 隱藏的 Canvas（拍照合成專用） */
+      #render-canvas {
+        display: none;
       }
     </style>
   </head>
   <body>
-    <!-- 1. 新年相框圖層 -->
-    <div id="overlay-frame"></div>
-    
-    <!-- 2. UI 按鈕與提示 -->
-    <div class="ui-container">
-      <div class="tip-text">🧧 看向鏡頭，按下紅色按鈕存檔 🧧</div>
-      <button id="capture-btn" onclick="takeNewYearSnapshot()"></button>
+    <div id="stage-container">
+      <!-- 1. 前置相機鏡頭串流 -->
+      <video id="camera-video" autoplay playsinline muted></video>
+
+      <!-- 2. 保證整幅出齊的相框層 -->
+      <div id="frame-overlay"></div>
     </div>
 
-    <!-- 3. AR 臉部辨識場景 (開啟前置鏡頭並開始追蹤) -->
-    <a-scene 
-      mindar-face="autoStart: true; faceOccluder: true" 
-      embedded 
-      color-space="sRGB" 
-      vr-mode-ui="enabled: false" 
-      device-orientation-permission-ui="enabled: false">
-      
-      <a-camera active="true" position="0 0 0" look-controls="enabled: false"></a-camera>
+    <!-- 3. 操作按鈕 -->
+    <div class="ui-bar">
+      <div class="hint">🧧 對準相框，按下按鈕合照存檔 🧧</div>
+      <button id="shutter-btn" onclick="capturePhoto()"></button>
+    </div>
 
-      <!-- 臉部定位點 (雖然我們用全螢幕固定相框，但保留這個定位點可擴充頭戴裝飾，如 AR 舞獅頭或兔耳) -->
-      <a-entity mindar-face-target="anchorIndex: 168">
-        <!-- 如果未來想在人臉上疊加 3D 道具，可以放這裏 -->
-      </a-entity>
-    </a-scene>
+    <canvas id="render-canvas"></canvas>
 
     <script>
-      // 拍照並儲存功能
-      function takeNewYearSnapshot() {
-        const scene = document.querySelector('a-scene');
-        // A-Frame 截圖組件會擷取當前相機畫面，並與 newyear.png 合併
-        scene.components.screenshot.getCanvas('perspective').toBlob((blob) => {
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = `NewYear_AR_Photo_${Date.now()}.png`;
-          link.click();
-        });
+      const video = document.getElementById('camera-video');
+      const canvas = document.getElementById('render-canvas');
+      const frameImg = new Image();
+      frameImg.src = './newyear.png'; // 載入相框圖片
+
+      // 1. 調用手機自拍鏡頭（最高解像度）
+      async function startCamera() {
+        try {
+          const constraints = {
+            audio: false,
+            video: {
+              facingMode: 'user', // 指定前置自拍鏡頭
+              width: { ideal: 1920 },
+              height: { ideal: 1080 }
+            }
+          };
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          video.srcObject = stream;
+        } catch (err) {
+          alert('請允許瀏覽器使用相機權限以使用 AR 相框！');
+          console.error(err);
+        }
       }
+
+      // 2. 拍照並完美合成「人像 + newyear.png 相框」
+      function capturePhoto() {
+        if (!video.videoWidth || !frameImg.complete) return;
+
+        // 以相框的原始尺寸作為最終輸出的高畫質解析度
+        const targetWidth = frameImg.naturalWidth || 1080;
+        const targetHeight = frameImg.naturalHeight || 1920;
+
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        const ctx = canvas.getContext('2d');
+
+        // A. 計算人像畫面並置中裁切填滿相框背後 (Cover 模式)
+        const vWidth = video.videoWidth;
+        const vHeight = video.videoHeight;
+        const videoRatio = vWidth / vHeight;
+        const frameRatio = targetWidth / targetHeight;
+
+        let sWidth, sHeight, sx, sy;
+        if (videoRatio > frameRatio) {
+          sHeight = vHeight;
+          sWidth = vHeight * frameRatio;
+          sx = (vWidth - sWidth) / 2;
+          sy = 0;
+        } else {
+          sWidth = vWidth;
+          sHeight = vWidth / frameRatio;
+          sx = 0;
+          sy = (vHeight - sHeight) / 2;
+        }
+
+        // B. 繪製人像鏡像（自拍鏡像儲存）
+        ctx.save();
+        ctx.translate(targetWidth, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, targetWidth, targetHeight);
+        ctx.restore();
+
+        // C. 將完整相框 1:1 完美蓋在人像最上層
+        ctx.drawImage(frameImg, 0, 0, targetWidth, targetHeight);
+
+        // D. 轉成照片下載至手機相簿
+        canvas.toBlob((blob) => {
+          const url = URL.createObjectURL(blob);
+          const downloadLink = document.createElement('a');
+          downloadLink.href = url;
+          downloadLink.download = `NewYear_Photo_${Date.now()}.png`;
+          downloadLink.click();
+          URL.revokeObjectURL(url);
+        }, 'image/png');
+      }
+
+      // 啟動相機
+      window.addEventListener('DOMContentLoaded', startCamera);
     </script>
   </body>
 </html>
